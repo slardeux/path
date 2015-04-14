@@ -18,6 +18,7 @@ img <- readPNG('station.png')
 # get x and y for each station
 station$x <- c(3.45,4.85,4.87,4.87,4.87,4.87,4.95,3.98,3.02,2.05,1.3,1.1,3.45)
 station$y <- c(3,2.6,2.9,3.27,3.55,3.93,1.15,1.15,1.2,1.2,1.12,1.12,2.05)
+
 station$idx <- 1:dim(station)[1]
 nwp <- station[13,]
 js1 <- station[10,]
@@ -179,57 +180,67 @@ save(sankExit, file = 'sankExit')
 ###############################################################################################################
 ## Travel 
 #############################################################################################################
-train <- read.csv('station_train.csv', row.names = NULL)
+alltrain <- read.csv('station_train.csv', row.names = NULL)
+alltrain <- read.csv('station_train_corrected.csv', row.names = NULL)
 station <- read.csv('station.csv', row.names = NULL)
 library(ggplot2)
 library(grid)
 library(dplyr)
-#t <- train[which(train$trip_id == '92875A744B2171'),]
+library(gridExtra)
 
-j3 <- train %>% filter(direction_id == 1, route_id == 861)
-j3$idx <- rep(1:8, dim(j3)[1]/8)
-station <- station %>% select(stop_id, stop_name)
-j3 <- left_join(j3, station, by = 'stop_id')
-j3 <- arrange(j3, traintime)
-j3$anim_id <- 1:dim(j3)[1]
-mx <- max(j3$left, j3$instop, j3$intrain)
-size <- data.frame(value = c(0:mx), s = seq(0,40, length.out = mx+1))
 get_size.f <- function(v, size){
-  v <- data.frame(value = v)
+  v <- data.frame(value = sqrt(v))
   out <- left_join(v, size)
   return(round(out$s))
 }
-j3[c('instop', 'takingtrain', 'intrain', 'left', 'leavingtrain')] <- apply(j3[c('instop', 'takingtrain', 'intrain', 'left', 'leavingtrain')], 2, get_size.f, size)
-l <- 8
-oopt <- ani.options(interval = 0.1)
-flux_animation <- function(){
-for(i in j3$anim_id){  
-    tmp <- j3[which(j3$anim_id <= i),]
-    time <- paste(j3$hour[which(j3$anim_id == i)], j3$min[which(j3$anim_id == i)], sep = ':')
-    if(any(duplicated(tmp$idx))){
-      rm <- which(tmp$idx == tmp$idx[dim(tmp)[1]])[1]
-      rmj3 <- which(j3$anim_id == tmp$anim_id[rm])
-      tmp <- tmp[-rm,]
-      j3 <- j3[-rmj3,]
-    }
-   p <- ggplot(data=tmp, aes(x = idx, y = 1, label = stop_name)) + 
-     geom_point(size = tmp$intrain, colour = '#0000FF') + 
-     geom_point(aes(x = idx-0.5, y = 1.25), colour = '#4EEE94', size = tmp$instop)+ 
-     geom_point(aes(x = idx-0.25, y = 1.12), col = '#00F5FF', size = tmp$takingtrain)+ 
-     geom_point(aes(x = idx+0.25, y = 0.88), col = '#FF8C00', size = tmp$leavingtrain)+ 
-     geom_point(aes(x = idx+0.5, y = 0.75), colour = '#FF0000', size = tmp$left)+ 
-     geom_text(aes(y = 1.5)) + 
-     geom_text(aes(x = (l+2), y = 1.25, label = 'In station before'))+
-     geom_text(aes(x = (l+2), y = 1.12, label = 'Taking the train'))+
-     geom_text(aes(x = (l+2), y = 1, label = 'In the train'))+
-     geom_text(aes(x = (l+2), y = 0.88, label = 'Leaving the train'))+
-     geom_text(aes(x = (l+2), y = 0.75, label = 'Left in the station'))+
-     geom_text(aes(x = (l/2), y = 0.55, label = 'Train direction'))+
-     geom_text(aes(x = (l+2), y = 1.5, label = paste(hour)))+
-     geom_segment(aes(x = 1, y = 0.6, xend = l, yend = 0.6), arrow = arrow(length = unit(0.5, 'cm')))+
-     #scale_size(range = c(0, 30), name = 'Number of people')+
-     scale_y_continuous(limits = c(0.5, 1.5))+
-     scale_x_continuous(limits = c(0, (l+3)))+
+get_todraw.f <- function(df, station, sz = TRUE){
+  if(df$route_id[1] == 861){l<-8}else if(df$route_id[1] == 862){l<-6}
+  df$idx <- rep(1:l, dim(df)[1]/l)
+  station <- station %>% select(stop_id, stop_name)
+  df <- left_join(df, station, by = 'stop_id')
+  mx <- max(df$left, df$instop, df$intrain, na.rm = TRUE)
+  size <- data.frame(value = sqrt(c(0:mx)), s = seq(0,40, length.out = mx+1))
+  if(sz){
+  df[c('instop', 'takingtrain', 'intrain', 'left', 'leavingtrain')] <- apply(df[c('instop', 'takingtrain', 'intrain', 'left', 'leavingtrain')], 2, get_size.f, size)  
+  }
+  return(df)
+}
+
+trains <- alltrain %>% filter(route_id %in% c(861, 862))
+
+trains$routdir <- paste(trains$route_id, trains$direction_id, sep = '_')
+t <- lapply(split(trains, trains$routdir), get_todraw.f, station)
+t <- lapply(split(trains, trains$routdir), get_todraw.f, station, sz = FALSE)
+#commonmintime <- max(sapply(t, function(x) min(x$traintime, na.rm= TRUE)))
+tr <- do.call(rbind, t)
+tr <- na.omit(tr)
+tr <- tr %>% filter(between(traintime, 358, 1260))
+tr <- arrange(tr, traintime)
+animtime <- data.frame(traintime = unique(tr$traintime), anim_id = c(1:length(unique(tr$traintime))))
+tr <- left_join(tr, animtime)
+
+
+
+I have an entrepreneurial mindset and co-own a business where I am responsible for all technical aspects including development of the e-commerce website, stock management, accounting, and visualization. 
+
+I have an entrepreneurial mindset and co-own a business where I am responsible for all technical aspects including development of the e-commerce website, stock management, accounting, and visualization. 
+m33 <- tr%>% filter(direction_id == 0, route_id == 861)
+nw <- tr %>% filter(direction_id == 1, route_id == 862)
+wn <- tr %>% filter(direction_id == 0, route_id == 862)
+
+get_toplot.f <- function(df, i){
+  tmp <- df[which(df$anim_id <= i),]
+  if(any(duplicated(tmp$idx))){
+    rm <- which(tmp$idx == tmp$idx[dim(tmp)[1]])[1]
+    rmdf <- which(df$anim_id == tmp$anim_id[rm])
+    tmp <- tmp[-rm,]
+    df <- df[-rmdf,]
+  }
+  return(list(df,tmp))
+}
+get_initial_plot.f <- function(l){
+  tmp <- data.frame(x = c(1:l))
+  p <- ggplot(data=tmp, aes(x = x, y=1)) + geom_point(colour = 'white') +
     theme(
       axis.text = element_blank(),
       axis.ticks = element_blank(),
@@ -238,13 +249,101 @@ for(i in j3$anim_id){
       panel.grid= element_blank(),
       legend.position = 'none'
     )
-   print(p)
-   animation::ani.pause()
+  return(p)
+}
+get_plot.f <- function(tmp, l){
+  tmp$hourmin <- paste(tmp$hour[dim(tmp)[1]], tmp$min[dim(tmp)[1]], sep = ':')
+  tmp$l <- l
+  p <- ggplot(data=tmp, aes(x = idx, y = 1, label = stop_name)) + 
+    geom_point(size = tmp$intrain, colour = '#0000FF') + 
+    geom_point(aes(x = idx-0.5, y = 1.25), colour = '#4EEE94', size = tmp$instop)+ 
+    geom_point(aes(x = idx-0.25, y = 1.12), col = '#00F5FF', size = tmp$takingtrain)+ 
+    geom_point(aes(x = idx+0.25, y = 0.88), col = '#FF8C00', size = tmp$leavingtrain)+ 
+    geom_point(aes(x = idx+0.5, y = 0.75), colour = '#FF0000', size = tmp$left)+ 
+    geom_text(aes(y = 1.5)) + 
+    geom_text(aes(x = (l+2), y = 1.25, label = 'In station before'))+
+    geom_text(aes(x = (l+2), y = 1.12, label = 'Taking the train'))+
+    geom_text(aes(x = (l+2), y = 1, label = 'In the train'))+
+    geom_text(aes(x = (l+2), y = 0.88, label = 'Leaving the train'))+
+    geom_text(aes(x = (l+2), y = 0.75, label = 'Left in the station'))+
+    geom_text(aes(x = (l/2), y = 0.55, label = 'Train direction'))+
+    geom_text(aes(x = (l+2), y = 1.5, label = hourmin),  colour = 'red', size = 10)+
+    geom_segment(aes(x = 1, y = 0.6, xend = l, yend = 0.6), arrow = arrow(length = unit(0.5, 'cm')))+
+    scale_y_continuous(limits = c(0.5, 1.5))+
+    scale_x_continuous(limits = c(0, (l+3)))+
+    theme(
+      axis.text = element_blank(),
+      axis.ticks = element_blank(),
+      axis.title = element_blank(),
+      panel.background = element_blank(),
+      panel.grid= element_blank(),
+      legend.position = 'none'
+    )
+  return(p) 
+}
+
+oopt <- ani.options(interval = 0.05)
+flux_animation <- function(){
+  p1 <- get_initial_plot.f(8)
+  p2 <- get_initial_plot.f(8)
+  p3 <- get_initial_plot.f(6)
+  p4 <- get_initial_plot.f(6)
+  for(i in tr$anim_id){ 
+    j3tmp <- get_toplot.f(j3, i)
+    j3 <- j3tmp[[1]]
+    m33tmp <- get_toplot.f(m33, i)
+    m33 <- m33tmp[[1]]
+    nwtmp <- get_toplot.f(nw, i)
+    nw <- nwtmp[[1]]
+    wntmp <- get_toplot.f(wn, i)
+    wn <- wntmp[[1]]
+    
+    if(nrow(j3tmp[[2]]) > 0){p1 <- get_plot.f(j3tmp[[2]],8)}
+    if(nrow(m33tmp[[2]]) > 0){p2 <- get_plot.f(m33tmp[[2]],8)}
+    if(nrow(nwtmp[[2]]) > 0){p3 <- get_plot.f(nwtmp[[2]],8)}
+    if(nrow(wntmp[[2]]) > 0){p4 <- get_plot.f(wntmp[[2]],8)}    
+    grid.arrange(p1, p2,p3,p4, ncol = 2)
+    animation::ani.pause()
   }
 }
 
-saveHTML(flux_animation(), autoplay = FALSE, loop = FALSE, verbose = TRUE, outdir = "imgflux", htmlfile ='flux.html', ani.height = 500, ani.width = 800,  single.opts = "'controls': ['first', 'previous', 'play', 'next', 'last', 'loop', 'speed'], 'delayMin': 0")
+saveHTML(flux_animation(), autoplay = FALSE, loop = FALSE, verbose = TRUE, outdir = "imgflux", htmlfile ='flux.html', ani.height = 500, ani.width = 1000,  single.opts = "'controls': ['first', 'previous', 'play', 'next', 'last', 'loop', 'speed'], 'delayMin': 0")
 
+
+#################################################################################################
+# in tarin histograms
+###################################################################################################
+
+j3 <- j3 %>% filter(stop_name != '33r')
+j3$stop_name <- j3$stop_name[,drop = TRUE]
+j3$stop_name <- factor(j3$stop_name, levels = levels(j3$stop_name)[c(6,5,7,4,3,1,2)])
+#levels(j3$stop_name) <- levels(j3$stop_name)[c(6,5,7,4,3,1,2)]
+
+ggplot(j3, aes(x = traintime, y = intrain)) + geom_bar(stat = 'identity', colour = 'blue')+
+  facet_wrap(~stop_name, ncol = 4) + ylab('Number of person in train') + 
+  geom_hline(yintercept = 700, colour = 'red')+
+  theme_bw() + 
+  theme(
+    panel.background = element_blank(),
+    panel.grid = element_blank(),
+    legend.position = 'none'
+    )
+
+
+nw <- nw %>% filter(stop_name != 'WTC')
+nw$stop_name <- nw$stop_name[,drop = TRUE]
+nw$stop_name <- factor(nw$stop_name, levels = levels(nw$stop_name)[c(5,3,4,2,1)])
+#levels(j3$stop_name) <- levels(j3$stop_name)[c(6,5,7,4,3,1,2)]
+
+ggplot(nw, aes(x = time, y = intrain)) + geom_bar(stat = 'identity', colour = 'blue')+
+  facet_wrap(~stop_name, ncol = 3) + ylab('Number of person in train') + 
+  geom_hline(yintercept = 800, colour = 'red')+
+  theme_bw() + 
+  theme(
+    panel.background = element_blank(),
+    panel.grid = element_blank(),
+    legend.position = 'none'
+  )
 
 
 

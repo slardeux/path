@@ -1,4 +1,4 @@
-setwd("~/data_project/B001_group_projects/PATHChallenge")
+setwd("/media/data/data_project/B001_group_projects/SylvieCode")
 
 schedule <- read.csv('path_schedule_clean.csv')
 turnstile <- read.csv('turnstile_cleaned_2.csv')
@@ -90,7 +90,7 @@ add_stop.f <- function(out){
       toadd <- toadd %>% filter(stop_id != 26731)
     }else if(route == 861 & direction == 1 & 26732 %in% out$stop_id){
       pa <- out %>% filter(stop_id == 26732)
-      toadd <- week %>% filter(stop_id == js$stop_id, direction_id == 0, route_id == 860, between(time, pa$time,pa$time+15)) %>% select(stop_id, time, route_id, direction_id, trip_id)
+      toadd <- week %>% filter(stop_id == pa$stop_id, direction_id == 0, route_id == 860, between(time, pa$time,pa$time+15)) %>% select(stop_id, time, route_id, direction_id, trip_id)
     }else{return(NULL)}
   }else if(route == 862){
     if(direction == 1){
@@ -154,7 +154,9 @@ rm_manhattan.f <- function(out){
   tm <- out %>% filter(direction_id == 1) #if the only possible exits are towrd manhattan
   if(nrow(tm) == nrow(out)){return(out)}else{
     tm <- tm[-which(tm$stop_id %in% c(26722, 26723, 26724)),]
-    return(tm)
+    tm2 <- out %>% filter(direction_id == 0)
+    out <- rbind(tm2, tm)
+    return(out)
   }
 }
 exit_per_entry_time.f <- function(time, week, station, en){
@@ -168,9 +170,9 @@ exit_per_entry_time.f <- function(time, week, station, en){
       posstrip <-  week %>% filter(stop_id == t$stop_id & time > t$time) %>% filter(time == min(time)) %>% select(trip_id, stop_sequence, route_id, direction_id)
     }
     posstrip$route_dir <- paste(posstrip$route_id,posstrip$direction_id, sep = '_')
-    if(length(unique(posstrip$route_dir)) > 1){
-      posstrip <-  posstrip[!duplicated(posstrip$route_dir),]
-    }
+    #if(length(unique(posstrip$route_dir)) > 1){
+     # posstrip <-  posstrip[!duplicated(posstrip$route_dir),]
+    #}
     if(station$inny[which(station$stop_id == t$stop_id)] & t$stop_id != 26726 & nrow(posstrip) > 1){
       #if the stop is in manhattan except for christopher st can only go to nj
       posstrip <- posstrip %>% filter(direction_id == 0) 
@@ -183,7 +185,7 @@ exit_per_entry_time.f <- function(time, week, station, en){
     
     if(nrow(out) != 0){
       out$exittime <- round(out$time/15)*15
-      out <- out[!(duplicated(out$stop_id) & duplicated(out$exittime)),]
+      #out <- out[!(duplicated(out$stop_id) & duplicated(out$exittime)),]
       out$exittime[which(out$exittime >= 1440)] <- out$exittime[which(out$exittime >= 1440)] - 1440
       out$n_exit = find_station_data.f(out)
       out$idx <- paste('t', en, i, sep = "")
@@ -205,7 +207,3 @@ possible_travel <- foreach(i = unique(turnweek$time)) %dopar% {
 possible_travel <- do.call(rbind, possible_travel)
 save(possible_travel, file = 'possible_travel')
 
-
-########################################################################################################
-## try to make sens of these data now....
-########################################################################################################

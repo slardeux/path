@@ -1,7 +1,6 @@
 ---
-title: "Model of the passenger flux in the PATH train system"
+title: "Model of the Passenger Flux in the PATH Train System"
 author: "Sylvie"
-date: "03/17/2015"
 output:
   html_document:
     fig_width: 9
@@ -27,9 +26,12 @@ img{
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(cache=TRUE)
 ```
-## Cleaning the data: give a common id to the train station
-Following a hackaton on the PATH train data we decided to help to create a model of the passenger flux in the PATH train system. We had access to three files, one with the number of entries and exit in each station in 15 minutes block, one with the all the schedule of the trains and one that has the name of the station, their id and the latitude and longitude of each station. 
-I loaded the 3 csv file from Github and realized that the stop_id were different in each file so I made a short script use the same id in the different data files and to add the name of the station in the turnstile data to help readability.
+<div id = 'imgleft'>
+![train](train.png)
+</div>
+## Cleaning the Data: Giving a common ID to the train stations
+
+Following a hackathon on the PATH train data, we decided to help to create a model of the passenger flux in the PATH train system. We had access to three files, one with the number of entries and exits in each station in 15 minutes block, one with the all the schedules of the trains and one that has the name of the station, the station ID, and the latitude and longitude of each station. I loaded the three csv files from Github and realized that the stop_id were different in each file; I made a short script using the same ID in the different data files and added the name of the station in the turnstile data to help readability.
 
 ```{r, eval = FALSE}
 schedule <- read.csv('path_schedule_clean.csv')
@@ -51,14 +53,15 @@ write.csv(turnstile, file = 'turnstile.csv')
 write.csv(link, file = 'link.csv')
 ```
 
-## Cleaning the data: extract time
+## Cleaning the Data: Extracting Time
 ```{r, echo = FALSE}
 schedule <- read.csv('schedule.csv')
 turnstile <- read.csv('turnstile.csv')
 link <- read.csv('link.csv')
 ```
 
-Using Lubridate I extracted the time of the entries and exit and converted it in minute beginning at 0 at midnight (so from 0 to 1440 for one day). I then added a Boolean value to flag whether or not each day was a week day or a week end day, kept only the week day and averaged the number of entry and exit across all week day. 
+Using Lubridate I extracted the time of the entries and exits and converted it into minutes beginning at 0 at midnight (so from 0 to 1440 for one day). I then added a Boolean value to flag whether or not each day was a week-day or a week-end day, kept only the week-day values and averaged the number of entries and exits across each week-day.
+
 ```{r}
 library(dplyr)
 library(lubridate)
@@ -72,7 +75,9 @@ flux <- turnstile %>% group_by(stop_id, weekday, hour, min, time) %>% dplyr::sum
 turnweek <- flux %>% filter(weekday)
 write.csv(turnweek, file = 'turnweek.csv')
 ```
-In the same manner, I extracted the time from the train schedule, converted it in minute from midnight, and kept only the week day train.
+
+In the same manner, I extracted the time from the train schedule, converted it in minutes from midnight, and kept only the week-day trains.
+
 ```{r}
 schedule$hour <- hour(hms(schedule$departure_time))
 schedule$min <- minute(hms(schedule$departure_time))
@@ -85,25 +90,27 @@ write.csv(week, file = 'week.csv')
 The PATH system is composed of 5 lines:
 
 * 859 Hoboken (Hob) to 33rd st (blue line)
-* 1024 Journal Square (JS) to 33rd st  via Hoboken (yellow and blue striped line late at night)
+* 1024 Journal Square (JS) to 33rd st via Hoboken (yellow and blue striped line late at night)
 * 860 Hoboken to World Trade Center (WTC, green line)
 * 862 Newark (NW) to WTC (red line)
-* 861  JS to 33rd st (yellow line)
+* 861 JS to 33rd st (yellow line)
 
 To get the passenger flux, I first put some assumption:
 
-* Nobody is going from 33rd st to WTC (or the other way) by the PATH
-* Nobody is taking the PATH to go from 33rd st to another stop of the yellow line in Manhattan apart for Christopher st.
-* People that change from red line to yellow line do it at JS and not at Groves
+* Nobody is going from 33rd st to WTC (or the other way) by the PATH.
+* Nobody is taking the PATH to go from 33rd st to another stop of the yellow line in Manhattan, apart from Christopher st.
+* People that change from the red line to the yellow line do so at JS and not at Groves.
 
 For example, this animation shows where a passenger entering the Newport station may be going and where a passenger exiting the Journal Square station may be coming from.
 
 <iframe src = 'https://dl.dropboxusercontent.com/u/18128908/pathAnimation/index.html' width = 900 height = 570 style = "border = none;"" seamless = 'seamless' frameborder = 'no' scrolling = 'no'></iframe>
 
-## First look at all the possible exit for a given entry
-To do so I looked at every 15 minute blocks. For each of this block, I look at each station and decide where people entering this station at this given time could potentially exit.
+## First, Look at All the Possible Exits for a Given Entry
 
-The main part is the just a for loop subsetting the turnstile data for a given time and calling the main function exit\_per\_entry\_time.f. I used the library doParallel and foreach to be able to parallelized the computation.
+To do so I looked at every 15-minute block. For each of these blocks, I looked at each station and decided where people entering each individual station at this given time could potentially exit.
+
+The main part is just a for loop, subsetting the turnstile data for a given time and calling the main function exit\_per_entry_time.f. I used the library doParallel for each to be able to parallelize the computation.
+
 ```{r, eval = FALSE}
 library(doParallel)
 library(foreach)
@@ -115,8 +122,11 @@ possible_travel <- foreach(i = unique(turnweek$time)) %dopar% {
 possible_travel <- do.call(rbind, possible_travel)
 save(possible_travel, file = 'possible_travel')
 ```
-The main function look at each station for a given time. For a station, I looked at all the train that come in this station between the time and 30 min after (if there is none, I look at the first train coming in). If several trains going in the same direction and following the same line come during this interval, I keep only the first one. If the stop is in Manhattan except for Christopher st I assumed peoples are going in New Jersey so removed train going towards 33rd st. When I have all the trip\_id of the possible train, I call get\_possible\_travel.f to get the possible exit and their time (see below). 
-I then round the possible exit time (got from the train schedule) in 15 minutes blocks to make it correspond to the turnstile data time. Finally it looks at how many peoples leaves each possible exit in a compatible time frame using the find\_station\_data.f function.
+
+The main function looks at each station for a given time. For a station, I looked at all the trains that come into this station between the scheduled time and 30 min after (if there were none, I looked at the first train coming in). If several trains going in the same direction and following the same line come during this interval, I keep only the first one. If the stop is in Manhattan, except for Christopher st, I assumed people are going to New Jersey so removed trains going towards 33rd st. When I had all the trip\_id of the possible trains, I called get_possible_travel.f to get the possible exits and their time (see below). 
+
+I then rounded the possible exit times (deduced from the train schedule) in 15-minute blocks to make them correspond to the turnstile data time. Finally, I looked at how many people leave each possible exit in a compatible time frame using the find\_station_data.f function.
+
 ```{r, eval = FALSE}
 exit_per_entry_time.f <- function(time, week, station, en){
   # this function takes a 'time' df aka a df from the turnstile data filtered by hour and for each station get the number of ppl that enter and look where they could possibly exit the system
@@ -152,7 +162,9 @@ exit_per_entry_time.f <- function(time, week, station, en){
   return(output)
 }
 ```
-The get\_possible\_travel.f function goes to all possible train and look for the possible exits along this train path and direction. In certain case, it is possible than riders changed train, in these case the add\_stop.f function will return the additional stops (as well as direction, line and time).
+
+The get\_possible_travel.f function goes to all possible trains and looks for the possible exits along the train paths and directions. In certain cases, it is possible that riders changed trains; in these cases the add_stop.f function will return the additional stops (as well as direction, line and time).
+
 ```{r, eval = FALSE}
 get_possible_travel.f <- function(posstrip, week){
   #this function get where and when the possible exit is for each entry point and time
@@ -222,7 +234,9 @@ add_stop.f <- function(out){
   return(toadd)  
 }   
 ```
-This function remove the possible stop in Manhattan if the person took a train in Manhattan (except Christopher st, and except if it is the only possibilities) 
+
+This function removes the possible stops in Manhattan if the person took a train in Manhattan (except Christopher st, and except if it is the only possibility).
+
 ```{r, eval=FALSE}
 rm_manhattan.f <- function(out){
   tm <- out %>% filter(direction_id == 1) #if the only possible exits are towrd manhattan
@@ -247,7 +261,8 @@ find_station_data.f <- function(x){
 ```{r, echo = FALSE}
 load('possible_travel')
 ```
-For example, the persons who enter at the station Newport can take the 33rd st -> Journal Square line in both direction, and then could change at Journal Square for the WTC -> Newark line, or Hoboken -> WTC line in both direction as illustrated with the example below. At the state of the analysis, a passenger has the same probability to get out at any station on these lines.
+
+For example, the people who enter at Newport Station can take the 33rd st -> Journal Square line in both directions, and then could change at Journal Square for the WTC -> Newark line, or Hoboken -> WTC line in both directions as illustrated with the example below. At this state of the analysis, a passenger has the same probability to get out at any station on these lines.
 
 ```{r, echo=FALSE}
 library(googleVis)
@@ -259,9 +274,11 @@ load('SankEntry')
 plot(sankEntry)
 ```
 </div>
-## Then look at the exit and find where people entered
 
-First we grouped the possible\_travel by exit stop and exit time and round the number of entry and exit (since it's averaged). I also created a exit index and a unique index for each line to help. 
+## Then Look at the Exit and Find Where People Entered
+
+First we grouped the possible_travel by exit stop and exit time, and rounded the number of entries and exits (since it’s averaged). I also created an exit index and a unique index for each line to help. 
+
 ```{r}
 by_exit <- possible_travel %>% group_by(exittime, stop_id)
 by_exit$n_entry <- round(by_exit$n_entry)
@@ -272,7 +289,8 @@ tochange <- arrange(tochange, exittime, stop_id)
 tochange$uidx <- 1:dim(tochange)[1]
 ```
 
-The get\_travel.f function get the number of people coming from each possible entry station (as given by the get\_n\_remove.f function) and store it in the n_people variable.
+The get\_travel.f function gets the number of people coming from each possible entry station (as given by the get\_n_remove.f function) and stores it in the n_people variable.
+
 ```{r, eval=FALSE}
 get_travel.f <- function(x){
     rem <- get_n_remove.f(x)
@@ -284,7 +302,9 @@ get_travel.f <- function(x){
   return(t)
 }
 ```
-The get\_n\_remove.f function take the total number of exit at a station and distribute it among all the possible entries on proportion of the number of people entering in each of these entries. I called the get\_rounded.f function that check that the number of people coming from each station is the same than the total number of exit. 
+
+The ge\t_n_remove.f function takes the total number of exits at a station and distributes it among all the possible entries, in proportion to the number of people entering in each of these entries. I called the get_rounded.f function that checked that the number of people coming from each station is the same as the total number of exits.
+
 ```{r, eval=FALSE}
 get_n_remove.f <- function(x){
   n <- x$n_exit[1]
@@ -320,7 +340,8 @@ get_rounded.f <- function(v, n){
 }
 ```
 
-The remove\_from\_entry.f function take the data that has not been use in the present loop call and remove the people that have been placed in a train  by using the torm data frame and looking for the entry with the same idx.
+The remove\_from_entry.f function takes the data that has not been used in the present loop call and removes the people that have been placed in a train by using the data frame named torm and looking for the entry with the same idx.
+
 ```{r, eval=FALSE}
 remove_from_entry.f <- function(df, x){
   x <- x %>% filter(n_people > 0)
@@ -333,10 +354,11 @@ remove_from_entry.f <- function(df, x){
   return(df)
 }
 ```
-The main loop look at each unique combination of stop and time  and call the get_travel function to gather where people exiting in this station are coming from. The number of people traveling is then removed from the number of entry and exit. 
 
-Some times, we could not find all as many people entering than exiting, in those case, we looked at earlier trains to find when these people entered (that would happens if they can't entered the train they would like to for example). In these case, it means they had to take a later train that the time of their entry suggest and these data are stored in the later train list.
-It is important to remember that each entry was repeated several time in the data frame (since for each entry we gathered all the possible exits) so now it is important to remove all the people we found a train for from the rest of the data; it is what the function remove\_from\_entry.f is for.
+The main loop looks at each unique combination of stop and time, and calls the get_travel function to gather where people exiting in this station are coming from. The number of people traveling is then removed from the number of entries and exits.
+
+Sometimes, we could not find as many people entering as exiting; in those cases, we looked at earlier trains to find when these people entered (that would happen if they could not enter the train they would like to, for example). In these cases, it means they had to take a later train than the first one that arrived corresponding to the time of their entry; these data are stored in the later train list. It is important to remember that each entry was repeated several times in the data frame (since for each entry we gathered all the possible exits) so now it is important to remove all the people we found a train for from the rest of the data; this is what the function remove\_from_entry.f is for.
+
 ```{r, eval=FALSE}
 travel <- list()
 latertrain <- list()
@@ -384,7 +406,8 @@ for(i in 1:lim){
 travel <- do.call(rbind, travel)
 changed1 <- tochange
 ```
-So for example if 100 passengers are leaving the Journal Square station, we may know how many of them are coming from each station by looking at how many people are in these stations when the train comes. (This is a theoretical example for illustration)
+
+So for example, if 100 passengers are leaving the Journal Square station, we may know how many of them are coming from each station by looking at how many people are in these stations when the train comes. (This is a theoretical example for illustration.)
 
 ```{r, echo=FALSE}
 library(googleVis)
@@ -397,12 +420,11 @@ plot(sankExit)
 ```
 </div>
 
-With that done we put most people in trains, however we still have some people left on the platform so it is something left to do. However it is interesting to see that they are mostly during rush hour.
+With that done, we put most people in trains, however, we still have some people left on the platform; there is more analysis left to do. However, it is interesting to see that it is mostly during rush hour that we have people remaining on the platform.
+
 ```{r, echo=FALSE}
 library(ggplot2)
 entryleft <- tochange %>% distinct(idx)
-#quantile(entryleft$n_entry)
-#sum(entryleft$n_entry)
 theme_set(theme_bw())
 new_theme = theme_update(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),
                          #panel.border = element_border.f(c("left","bottom")),
@@ -452,12 +474,17 @@ write.csv(train, file = 'train.csv')
 ```{r, echo=FALSE}
 train <- read.csv('train.csv', row.names = NULL)
 ```
-For example this train leaves 33rd st at 16:37 and goes to JS. 262 persons entered it in 33rd st 413 entered it at Newport and the maximum number of person in the train was 545 after the Newport stop.
-```{r}
+
+For example, this train leaves 33rd st at 16:37 and goes to JS. 262 persons entered it at 33rd st; 413 entered it at Newport; and the maximum number of people in the train was 545 after the Newport stop.
+
+```{r, echo=FALSE}
 head(train, 8)
 ```
-## Station flux
-To get the flux of people in each station and train, I looked at each station and for a given 15 minute block all the people entering and exiting the station, as well as every people entering or exiting train stopping in this station during this time.
+
+## Station Flux
+
+To get the flux of people in each station and train, I looked at each station and for a given 15-minute block all the people entering and exiting the station, as well as every person entering or exiting trains that are stopping in this station during this time.
+
 ```{r, eval=FALSE}
 turnweek$mentry <- round(turnweek$mentry)
 turnweek$mexit <- round(turnweek$mexit)
@@ -491,7 +518,9 @@ for(i in unique(flux$stop_id)){
 station_flux <- do.call(rbind, station_flux)
 station_flux <- station_flux[which(!duplicated(station_flux$idx)),]
 ```
+
 By grouping the station flux and the train flux we have a data frame with all the people flux in the PATH network.
+
 ```{r, eval = FALSE}
 train$departure_time <- as.character(train$departure_time) 
 pf <- left_join(train, station_flux, by='idx')
@@ -502,139 +531,16 @@ write.csv(pf, file = 'train_station.csv')
 train <- read.csv('station_train.csv', row.names=NULL)
 station <- read.csv('station.csv', row.names = NULL)
 ```
-For example, for the same train, we can now see how many person where in the station before the train arrive, hoe many are leaving the station and how many people are left in the station. All these number have to be taken carefully as we only have 15 minutes blocks and several trains are likely to come during this time.
+
+For example, for the same train, we can now see how many people where in the station before the train arrived, how many are leaving the station, and how many people are left in the station. All these numbers have to be taken carefully as we only have 15 minute blocks and several trains are likely to come during this time.
+
 ```{r}
 head(train)
 ```
-## Some plotting 
-```{r}
-library(ggplot2)
-library(grid)
-library(dplyr)
-t <- train[which(train$trip_id == '92875A744B2171'),]
-t <- left_join(t, station, by = 'stop_id')
-t$idx <- 1:dim(t)[1]
-l <- dim(t)[1]
-ggplot(data=t, aes(x = idx, y = 1, label = stop_name)) + 
-  geom_point(aes(size = intrain), colour = '#0000FF') + 
-  geom_point(aes(x = idx-0.5, y = 1.25, size = instop), colour = '#4EEE94')+ 
-  geom_point(aes(x = idx-0.25, y = 1.12, size = takingtrain), col = '#00F5FF')+ 
-  geom_point(aes(x = idx+0.25, y = 0.88, size = leavingtrain), col = '#FF8C00')+ 
-  geom_point(aes(x = idx+0.5, y = 0.75, size = left), colour = '#FF0000')+ 
-  geom_text(aes(y = 1.5)) + 
-  geom_text(aes(x = (l+2), y = 1.25, label = 'In station before'))+
-  geom_text(aes(x = (l+2), y = 1.12, label = 'Taking the train'))+
-  geom_text(aes(x = (l+2), y = 1, label = 'In the train'))+
-  geom_text(aes(x = (l+2), y = 0.88, label = 'Leaving the train'))+
-  geom_text(aes(x = (l+2), y = 0.75, label = 'Left in the station'))+
-  geom_text(aes(x = (l/2), y = 0.55, label = 'Train direction'))+
-  geom_segment(aes(x = 1, y = 0.6, xend = l, yend = 0.6), arrow = arrow(length = unit(0.5, 'cm')))+
-  scale_size(range = c(0, 20), name = 'Number of people')+
-  scale_y_continuous(limits = c(0.5, 1.5))+
-  scale_x_continuous(limits = c(0, (l+3)))+
-  theme(
-    axis.text = element_blank(),
-    axis.ticks = element_blank(),
-    axis.title = element_blank(),
-    panel.background = element_blank(),
-    panel.grid.major = element_blank(),
-    panel.grid.minor = element_blank(),
-    legend.key = element_blank()
-    )
-```
-```{r, echo=FALSE}
-t <- train[train$id == 171,]
-t <- left_join(t, station, by = 'stop_id')
-t$idx <- 1:dim(t)[1]
-l <- dim(t)[1]
-ggplot(data=t, aes(x = idx, y = 1, label = stop_name)) + 
-  geom_point(aes(size = intrain), colour = '#0000FF') + 
-  geom_point(aes(x = idx-0.5, y = 1.25, size = instop), colour = '#4EEE94')+ 
-  geom_point(aes(x = idx-0.25, y = 1.12, size = takingtrain), col = '#00F5FF')+ 
-  geom_point(aes(x = idx+0.25, y = 0.88, size = leavingtrain), col = '#FF8C00')+ 
-  geom_point(aes(x = idx+0.5, y = 0.75, size = left), colour = '#FF0000')+ 
-  geom_text(aes(y = 1.5)) + 
-  geom_text(aes(x = (l+2), y = 1.25, label = 'In station before'))+
-  geom_text(aes(x = (l+2), y = 1.12, label = 'Taking the train'))+
-  geom_text(aes(x = (l+2), y = 1, label = 'In the train'))+
-  geom_text(aes(x = (l+2), y = 0.88, label = 'Leaving the train'))+
-  geom_text(aes(x = (l+2), y = 0.75, label = 'Left in the station'))+
-  geom_text(aes(x = (l/2), y = 0.55, label = 'Train direction'))+
-  geom_segment(aes(x = 1, y = 0.6, xend = l, yend = 0.6), arrow = arrow(length = unit(0.5, 'cm')))+
-  scale_size(range = c(0, 20), name = 'Number of people')+
-  scale_y_continuous(limits = c(0.5, 1.5))+
-  scale_x_continuous(limits = c(0, (l+3)))+
-  theme(
-    axis.text = element_blank(),
-    axis.ticks = element_blank(),
-    axis.title = element_blank(),
-    panel.background = element_blank(),
-    panel.grid.major = element_blank(),
-    panel.grid.minor = element_blank(),
-    legend.key = element_blank()
-    )
-```
-```{r, echo=FALSE}
-t <- train[train$id == 109,]
-t <- left_join(t, station, by = 'stop_id')
-t$idx <- 1:dim(t)[1]
-l <- dim(t)[1]
-ggplot(data=t, aes(x = idx, y = 1, label = stop_name)) + 
-  geom_point(aes(size = intrain), colour = '#0000FF') + 
-  geom_point(aes(x = idx-0.5, y = 1.25, size = instop), colour = '#4EEE94')+ 
-  geom_point(aes(x = idx-0.25, y = 1.12, size = takingtrain), col = '#00F5FF')+ 
-  geom_point(aes(x = idx+0.25, y = 0.88, size = leavingtrain), col = '#FF8C00')+ 
-  geom_point(aes(x = idx+0.5, y = 0.75, size = left), colour = '#FF0000')+ 
-  geom_text(aes(y = 1.5)) + 
-  geom_text(aes(x = (l+2), y = 1.25, label = 'In station before'))+
-  geom_text(aes(x = (l+2), y = 1.12, label = 'Taking the train'))+
-  geom_text(aes(x = (l+2), y = 1, label = 'In the train'))+
-  geom_text(aes(x = (l+2), y = 0.88, label = 'Leaving the train'))+
-  geom_text(aes(x = (l+2), y = 0.75, label = 'Left in the station'))+
-  geom_text(aes(x = (l/2), y = 0.55, label = 'Train direction'))+
-  geom_segment(aes(x = 1, y = 0.6, xend = l, yend = 0.6), arrow = arrow(length = unit(0.5, 'cm')))+
-  scale_size(range = c(0, 20), name = 'Number of people')+
-  scale_y_continuous(limits = c(0.5, 1.5))+
-  scale_x_continuous(limits = c(0, (l+3)))+
-  theme(
-    axis.text = element_blank(),
-    axis.ticks = element_blank(),
-    axis.title = element_blank(),
-    panel.background = element_blank(),
-    panel.grid.major = element_blank(),
-    panel.grid.minor = element_blank(),
-    legend.key = element_blank()
-    )
-```
-```{r, echo=FALSE}
-t <- train[train$id == 7,]
-t <- left_join(t, station, by = 'stop_id')
-t$idx <- 1:dim(t)[1]
-l <- dim(t)[1]
-ggplot(data=t, aes(x = idx, y = 1, label = stop_name)) + 
-  geom_point(aes(size = intrain), colour = '#0000FF') + 
-  geom_point(aes(x = idx-0.5, y = 1.25, size = instop), colour = '#4EEE94')+ 
-  geom_point(aes(x = idx-0.25, y = 1.12, size = takingtrain), col = '#00F5FF')+ 
-  geom_point(aes(x = idx+0.25, y = 0.88, size = leavingtrain), col = '#FF8C00')+ 
-  geom_point(aes(x = idx+0.5, y = 0.75, size = left), colour = '#FF0000')+ 
-  geom_text(aes(y = 1.5)) + 
-  geom_text(aes(x = (l+2), y = 1.25, label = 'In station before'))+
-  geom_text(aes(x = (l+2), y = 1.12, label = 'Taking the train'))+
-  geom_text(aes(x = (l+2), y = 1, label = 'In the train'))+
-  geom_text(aes(x = (l+2), y = 0.88, label = 'Leaving the train'))+
-  geom_text(aes(x = (l+2), y = 0.75, label = 'Left in the station'))+
-  geom_text(aes(x = (l/2), y = 0.55, label = 'Train direction'))+
-  geom_segment(aes(x = 1, y = 0.6, xend = l, yend = 0.6), arrow = arrow(length = unit(0.5, 'cm')))+
-  scale_size(range = c(0, 20), name = 'Number of people')+
-  scale_y_continuous(limits = c(0.5, 1.5))+
-  scale_x_continuous(limits = c(0, (l+3)))+
-  theme(
-    axis.text = element_blank(),
-    axis.ticks = element_blank(),
-    axis.title = element_blank(),
-    panel.background = element_blank(),
-    panel.grid.major = element_blank(),
-    panel.grid.minor = element_blank(),
-    legend.key = element_blank()
-    )
-```
+
+## Passenger Flux
+
+To visualize the passenger flux in the station and in the train I built an animation for the JS -> 33rd st. line in both direction as well as the WTC -> Newark line in both direction:
+
+<iframe src = 'https://dl.dropboxusercontent.com/u/18128908/pathFlux/index.html' width = 900 height = 570 style = "border = none;"" seamless = 'seamless' frameborder = 'no' scrolling = 'no'></iframe>
+

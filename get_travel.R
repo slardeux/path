@@ -1,4 +1,4 @@
-setwd("~/data_project/B001_group_projects/SylvieCode")
+setwd("/media/data/data_project/B001_group_projects/SylvieCode")
 
 library(dplyr)
 load('possible_travel')
@@ -6,8 +6,8 @@ station <- read.csv('station.csv')
 turnstile <- read.csv('turnstile.csv')
 week <- read.csv('week.csv')
 turnweek <- read.csv('turnweek.csv')
+#schedule <- read.csv('schedule.csv')
 sum(turnweek$mexit) - sum(turnweek$mentry)  #diff 123586
-
 by_exit <- possible_travel %>% group_by(exittime, stop_id)
 
 by_exit$n_entry <- round(by_exit$n_entry)
@@ -52,7 +52,7 @@ get_rounded.f <- function(v, n){
 }
 get_n_remove.f <- function(x){
   n <- x$n_exit[1]
-  p <- x$n_entry/sum(x$n_entry)
+  if(sum(x$n_entry) == 0){p <- rep(0, dim(x)[1])}else{p <- x$n_entry/sum(x$n_entry)}
   real <- n*p
   if(is.na(real[1])){rmv <- 0}else{rmv <- get_rounded.f(real,n)}  
   return(rmv)  
@@ -61,6 +61,7 @@ remove_from_entry.f <- function(df, x){
   x <- x %>% filter(n_people > 0)
   for(i in 1:dim(x)[1]){
     tmp <- df %>% filter(idx == as.character(x$idx[i]))
+    if( any(tmp$n_entry - as.numeric(x$n_people[i]) <0)) break
     tmp$n_entry <- tmp$n_entry - as.numeric(x$n_people[i])
     tmp2 <- df %>% filter(idx != as.character(x$idx[i]))
     df <- rbind(tmp, tmp2)
@@ -70,38 +71,44 @@ remove_from_entry.f <- function(df, x){
 
 tochange <- as.data.frame(by_exit)
 tochange$exitidx <- paste(tochange$exittime, tochange$stop_id,sep = '_')
-#round(abs(sum(tochange %>% distinct(exitidx) %>% select(n_exit)) - sum(tochange %>% distinct(idx) %>% select(n_entry)))/96)
-#maybe should do it by entrance since there is less ppl entering than exiting
 travel <- list()
 latertrain <- list()
 tochange <- arrange(tochange, exittime, stop_id)
 tochange$uidx <- 1:dim(tochange)[1]
 lim <- length(unique(tochange$exitidx))
 for(i in 1:lim){
+  print(i)
   idx <- unique(tochange$exitidx)[i]
-  tmp <- tochange[which(tochange$exitidx == idx),]
-  #if(length(unique(tmp$route_id)) > 1){break}
+  tmp <- tochange[which(tochange$exitidx == idx),] %>% distinct(idx)
   trav <- get_travel.f(tmp)
   torm <- trav %>% select(idx, n_people)
   if(any(torm$n_people > 0)){
     tmp$n_exit <- tmp$n_exit - sum(torm$n_people)
     tmp$n_entry <- tmp$n_entry - torm$n_people
     if(any(tmp$n_exit > 0)){
-      et <- min(tmp$entrytime)
-      if(et < 30){et = 1440 - et}
+      et <- tmp$exittime[1]
       prev <- 15
-      tmp2 <- tochange %>% filter(entry_stop %in% tmp$entry_stop & between(entrytime, et-prev, et) & route_id %in% tmp$route_id & direction_id %in% tmp$direction_id & !(idx %in% tmp$idx)) %>% distinct(idx)
+      if(et == 0){et = 1440}      
+      tmp2 <- tochange %>% filter(stop_id == tmp$stop_id[1] & between(entrytime, et-prev, et) & between(exittime, (et - 60), (et+15)) & !(idx %in% tmp$idx)) %>% distinct(idx)
      while(sum(tmp2$n_entry) < tmp$n_exit[1] & prev <= 90){
-        prev <- prev + 15
-        tmp2 <- tochange %>% filter(entry_stop %in% tmp$entry_stop & between(entrytime, et-prev, et) & route_id %in% tmp$route_id & direction_id %in% tmp$direction_id & !(idx %in% tmp$idx)) %>% distinct(idx)
+       if((et - prev) <= 0){
+         et <- 1440
+         prev <- prev + 15
+         tmp3 <- tochange %>% filter(stop_id == tmp$stop_id[1] & between(entrytime, et-prev, et) & between(exittime, (et - 60), (et+15)) & !(idx %in% tmp$idx)) %>% distinct(idx)
+         tmp2 <- rbind(tmp2, tmp3)
+       }else{
+          prev <- prev + 15
+          tmp2 <- tochange %>% filter(stop_id == tmp$stop_id[1] & between(entrytime, et-prev, et) & between(exittime, (et - 60), (et+15)) & !(idx %in% tmp$idx)) %>% distinct(idx)
       }
+     }
      if(nrow(tmp2) >0){
-        tmp2$n_exit = tmp$n_exit[1]
+        exittmp2 <- tmp2$n_exit
+        tmp2$n_exit <- tmp$n_exit[1]
         trav2 <- get_travel.f(tmp2)
         torm2 <- trav2 %>% select(idx, n_people)
        if(any(torm2$n_people > 0)){
           latertrain[[i]] <- data.frame(torm2, uidx  = tmp2$uidx, wait = et - tmp2$entrytime)
-          tmp2$n_exit <- 0
+          tmp2$n_exit <- exittmp2
           tmp2$n_entry <- tmp2$n_entry - torm2$n_people
           tmp$n_exit = tmp$n_exit - sum(torm2$n_people)
           tmp <- rbind(tmp, tmp2)
@@ -111,8 +118,8 @@ for(i in 1:lim){
     }  
     notuse <- tochange[which(!(tochange$uidx %in% tmp$uidx)),]    
     notuse <- remove_from_entry.f(notuse, torm) #as there is repetition of line need to remove in each repetition
+    if(any(notuse$n_entry < 0)) break
     tochange <- rbind(tmp, notuse)
-    if(any(tochange$n_entry < 0 )){break}
   }
   travel[[i]] <- trav
   tochange <- arrange(tochange, exittime, stop_id)
@@ -122,16 +129,65 @@ changed1 <- tochange
 
 save(travel, file = 'travel')
 
+
+######################################################################################################
+# looking at people i coud not pout on a train
+##################################################################################################
 entryleft <- tochange %>% distinct(idx)
 quantile(entryleft$n_entry)
 sum(entryleft$n_entry)
-plot(n_entry~entrytime, entryleft, col = 'red', pch = 20)
-
-
 exitleft <- tochange %>% distinct(exitidx)
 quantile(exitleft$n_exit)
 sum(exitleft$n_exit)
+plot(n_entry~entrytime, entryleft, col = 'red', pch = 20)
+points(n_exit~exittime, exitleft, col = 'blue', pch = 20)
+pertime = turnweek %>% group_by(time) %>% summarise( avgflux = mean(flux))
+plot(avgflux~time, pertime, col = 'red', pch = 20)
+## looks as if they do not correspond
+##check the data and seems to be a data problem
+flux = turnweek %>% dplyr::mutate(flux15 = mentry - lead(mexit), flux30 = mentry - lead(mexit, 2)) %>% group_by(time) %>% dplyr::summarise( avgflux = mean(flux), avgflux15 = mean(flux15), avgflux30 = mean(flux30))s
+plot(avgflux~time, flux, col = 'red', pch = 20, type = 'l')
+points(avgflux15~time, flux, col = 'blue', pch = 20, type = 'l')
+points(avgflux30~time, flux, col = 'green', pch = 20, type = 'l')
 
+# add these passenger to the train in proportion of the train capacity
+entryleft <- entryleft %>% filter(n_entry != 0)
+exitleft <- exitleft %>% filter(n_exit != 0)
+add_passenger.f <- function(t, tvl, entry=TRUE){
+  if(entry){
+    tmp <- tvl[which(tvl$idx == t$idx),]
+    rest <- tvl[-which(tvl$idx == t$idx),]
+    n <- t$n_entry
+  }else{
+    tmp <- tvl[which(tvl$exitidx == t$exitidx),]
+    rest <- tvl[-which(tvl$exitidx == t$exitidx),]
+    n <- t$n_exit
+  }
+  if(sum(tmp$n_people) == 0){p <- rep(n/dim(tmp)[1], dim(tmp)[1])}else{p <- n*tmp$n_people/sum(tmp$n_people)}
+  tmp$n_people <- tmp$n_people + get_rounded.f(p, n)
+  tvl <- rbind(tmp, rest)
+  return(tvl)
+}
+tvl <- travel
+for(i in 1:dim(entryleft)[1]){
+  t <- entryleft[i,]
+  tvl <- add_passenger.f(t, tvl)
+}
+travel <- tvl
+tvl <- travel
+tvl$exitidx <- paste(tvl$exittime, tvl$stop_id, sep = '_')
+for(i in 1:dim(exitleft)[1]){
+  t <- exitleft[i,]
+  tvl <- add_passenger.f(t, tvl, FALSE)
+}
+travel <- tvl
+save(travel, file = 'travel')
+save(entryleft, file = 'entryleft')
+save(exitleft, file = 'exitleft')
+
+#######################################################################################################
+# create a dataframe with the train and the passenger taking it and leaving it
+######################################################################################################
 get_other_entry.f <- function(s,e){
   #this function get the point where people enter this train when they change lines
   if((s$route_id[1] == 861 | s$route_id[1] == 1024) & s$direction_id[1] == 1){#js to 33d st
@@ -158,17 +214,11 @@ get_other_entry.f <- function(s,e){
   return(s)
 }
 
-#859 hob to 33d and back blue
-#1024 JS to 33 via hob yellow and blue
-#860 hob to wtc green
-#862 nw to wtc  red
-#861  JS to 33d yellow
-groupedtravel <- travel %>% group_by(trip_id, entry_stop, stop_id) %>% summarise(count = sum(n_people))
+groupedtravel <- travel %>% group_by(trip_id, entry_stop, stop_id) %>% dplyr::summarise(count = sum(n_people))
 train <- list()
-tid <- unique(week$trip_id)[44:1030]
+tid <- unique(week$trip_id)
 for(i in tid){
-  #options(warn = w); cat("\n warn =", i, "\n")
-  sched <- schedule %>% filter(trip_id == as.character(i))
+  sched <- week %>% filter(trip_id == as.character(i))
   tr <- groupedtravel %>% filter(trip_id == as.character(i))
   enter <- tr %>% group_by(stop_id = entry_stop) %>% dplyr::summarise(entry = sum(count))
   exit <- tr %>% group_by(stop_id) %>% dplyr::summarise(exit = sum(count))
@@ -196,7 +246,7 @@ quantile(train$intrain)
 
 
 ###############################################################################################################
-# now let's look at the station flux
+# now let's look at the station flux and put everything together
 ###############################################################################################################
 #should take each station cumsum entry and remove ppl leaving station per train...
 turnweek$mentry <- round(turnweek$mentry)
@@ -220,11 +270,11 @@ for(i in unique(flux$stop_id)){
     if(nrow(t) > 0){
       if(any(t$transfer > 0)){s$instation <- s$instation + sum(t$transfer)}
       left <- s$instation - sum(t$entry)
-      if(left < 0){left <- 0}#not sure why sometimes I have neg numbers there..... I actually think it was because i forgot the else... now should be ok.
+      if(left < 0){left <- 0}#to deal with night problem where there is less train....
       onestat[[k]] <- data.frame(stop_id = s$stop_id, time = s$time, instop = s$instation, takingtrain = t$entry, left, traintime = t$time, leavingtrain = t$exit, leavingstop = s$mexit, idx = t$idx)   
       k <- k + 1
-    }else{left <- s$instation}
-    if(left < before$mexit){left <- 0}else{left <- left - before$mexit}
+    }else{left <- left + s$instation}
+    if(left < s$mexit){left <- 0}else{left <- left - s$mexit}
   }
   station_flux[[i]] <- do.call(rbind, onestat) 
 }
@@ -235,14 +285,13 @@ train$departure_time <- as.character(train$departure_time)
 pf <- left_join(train, station_flux, by='idx')
 pf <- pf %>% select(stop_id = stop_id.x, time = time.y, instop,route_id, direction_id, trip_id, id, traintime, hour, min, takingtrain, intrain, left,  leavingtrain, leavingstop)
 write.csv(pf, file = 'station_train.csv')
-
+write.csv(pf, file = 'station_train_corrected.csv')
 
 #######################################################################################################
-##
+## some plot to check
 #########################################################################################################
 train <- read.csv('station_train.csv', row.names = NULL)
 station <- read.csv('station.csv', row.names = NULL)
-#sched <- read.csv('schedule.csv', row.names = NULL)
 
 library(ggplot2)
 library(grid)
@@ -283,7 +332,5 @@ ggplot(data=t, aes(x = idx, y = 1, label = stop_name)) +
     panel.grid.minor = element_blank(),
     legend.key = element_blank()
     )
-
-#pf[which(pf$intrain > 700),]
 
 
